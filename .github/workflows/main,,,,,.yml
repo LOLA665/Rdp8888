@@ -1,0 +1,86 @@
+name: My Summer Car Max FPS Windows Server 2025 Larger Runner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  gaming-server:
+    runs-on: windows-2025-larger
+    timeout-minutes: 4320
+
+    steps:
+      - name: Verificare Power Plan Ultimate Performance
+        shell: pwsh
+        run: |
+          $plan = powercfg -list | Select-String -Pattern "Ultimate Performance"
+          if (-not $plan) {
+            powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
+          }
+          powercfg -setactive e9a42b02-d5df-448d-aa00-03f14749eb61
+          Write-Host "Power plan set to Ultimate Performance."
+
+      - name: Activează Game Mode Windows
+        shell: pwsh
+        run: |
+          reg add "HKLM\SOFTWARE\Microsoft\GameBar" /v "AllowAutoGameMode" /t REG_DWORD /d 1 /f
+          Write-Host "Game Mode activat."
+
+      - name: Dezactivează procese inutile
+        shell: pwsh
+        run: |
+          $procs = "OneDrive", "Cortana", "MicrosoftEdge", "SearchUI"
+          foreach ($p in $procs) {
+            Get-Process $p -ErrorAction SilentlyContinue | Stop-Process -Force
+          }
+          Write-Host "Procesele inutile au fost oprite."
+
+      - name: Activează Remote Desktop și firewall
+        shell: pwsh
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          netsh advfirewall firewall add rule name="RDP-Allow" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Resetează parola runneradmin
+        shell: pwsh
+        run: |
+          function GenPass { -join ((33..126) | Get-Random -Count 16 | % {[char]$_}) }
+          $user = "runneradmin"
+          $existingUser = Get-LocalUser -Name $user -ErrorAction SilentlyContinue
+          if (-not $existingUser) { exit 0 }
+          $newPass = GenPass
+          $secure = ConvertTo-SecureString $newPass -AsPlainText -Force
+          Set-LocalUser -Name $user -Password $secure
+          Write-Output "RUNNERADMIN_USER=$user" >> $env:GITHUB_ENV
+          Write-Output "RUNNERADMIN_PASS=$newPass" >> $env:GITHUB_ENV
+
+      - name: Instalează și configurează Tailscale VPN
+        shell: pwsh
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-mysummercar-$env:GITHUB_RUN_ID
+
+      - name: Afișează date acces și IP Tailscale
+        shell: pwsh
+        run: |
+          Write-Host "User: $env:RUNNERADMIN_USER"
+          Write-Host "Pass: $env:RUNNERADMIN_PASS"
+          try {
+            $tsIp = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+            Write-Host "Tailscale IP: $tsIp"
+          } catch {
+            Write-Host "Tailscale IP nu este disponibil."
+          }
+
+      - name: Menține conexiunea live (ping la 10 min)
+        shell: pwsh
+        run: |
+          for ($i=0; $i -lt 432; $i++) {
+            Write-Host "Menținere conexiune iter $i - $(Get-Date)"
+            Start-Sleep -Seconds 600
+          }
+          

@@ -1,0 +1,95 @@
+name: Max FPS My Summer Car Windows Server 2025
+
+on:
+  workflow_dispatch:
+
+jobs:
+  gaming-server:
+    runs-on: windows-2022
+    timeout-minutes: 4320
+    # Configure large RAM and SSD (exemplu, depinde de runner cloud oferit)
+    # Nu toate runner-ele Github permit configurarea memoriei și spațiului, în cloud propriu trebuie configurat manual
+    
+    steps:
+      - name: Set large RAM and SSD for VM (depinde de cloud/provider)
+        shell: pwsh
+        run: |
+          Write-Host "Notă: Configurarea RAM și SSD trebuie făcută în platforma cloud, nu GitHub runner."
+          Write-Host "Se recomandă minim 64GB RAM și 2TB SSD pentru performanță maximă."
+
+      - name: Optimize Windows for max gaming FPS
+        shell: pwsh
+        run: |
+          # Power plan: Ultimate Performance
+          powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
+          powercfg -setactive e9a42b02-d5df-448d-aa00-03f14749eb61
+
+          # Disable visual effects for max FPS
+          $perfOptions = @(
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects\VisualFXSetting"
+          )
+          foreach ($path in $perfOptions) {
+            Set-ItemProperty -Path $path -Name VisualFXSetting -Value 2
+          }
+
+          # Enable Windows Game Mode
+          reg add "HKLM\SOFTWARE\Microsoft\GameBar" /v "AllowAutoGameMode" /t REG_DWORD /d 1 /f
+
+          # Disable unnecessary background apps and telemetry
+          Get-Process "OneDrive","Cortana","MicrosoftEdge","SearchUI" -ErrorAction SilentlyContinue | Stop-Process -Force
+
+          # Cleanup storage junk files
+          Cleanmgr /sagerun:1
+          Write-Host "Windows optimizat pentru gaming maxim."
+
+      - name: Enable Remote Desktop and firewall
+        shell: pwsh
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          netsh advfirewall firewall add rule name="RDP-Allow" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Reset runneradmin password
+        shell: pwsh
+        run: |
+          function GenPass { -join ((33..126) | Get-Random -Count 16 | % {[char]$_}) }
+          $user = "runneradmin"
+          $existingUser = Get-LocalUser -Name $user -ErrorAction SilentlyContinue
+          if (-not $existingUser) { exit 0 }
+          $newPass = GenPass
+          $secure = ConvertTo-SecureString $newPass -AsPlainText -Force
+          Set-LocalUser -Name $user -Password $secure
+          Write-Output "RUNNERADMIN_USER=$user" >> $env:GITHUB_ENV
+          Write-Output "RUNNERADMIN_PASS=$newPass" >> $env:GITHUB_ENV
+
+      - name: Install and setup Tailscale VPN
+        shell: pwsh
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-mysummercar-$env:GITHUB_RUN_ID
+
+      - name: Show access info and Tailscale IP
+        shell: pwsh
+        run: |
+          Write-Host "=== My Summer Car Server ACCESS INFO ==="
+          Write-Host "User: $env:RUNNERADMIN_USER"
+          Write-Host "Pass: $env:RUNNERADMIN_PASS"
+          try {
+            $tsIp = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+            Write-Host "Tailscale IP: $tsIp"
+          } catch {
+            Write-Host "Tailscale IP not available"
+          }
+
+      - name: Keep alive with periodic ping (10 minutes)
+        shell: pwsh
+        run: |
+          for ($i=0; $i -lt 432; $i++) {
+            Write-Host "Keep alive cycle $i - $(Get-Date)"
+            Start-Sleep -Seconds 600
+          }
+          
